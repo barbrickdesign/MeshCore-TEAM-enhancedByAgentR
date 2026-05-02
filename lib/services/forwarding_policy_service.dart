@@ -78,6 +78,20 @@ class ForwardingPolicyService extends ChangeNotifier {
   bool get currentNeedsForwarding => _v1Strategy.currentNeedsForwarding;
   int get currentMaxPathObserved => _v1Strategy.currentMaxPathObserved;
 
+  /// Number of known nodes in the topology graph (from received #T: messages).
+  int get topologyNodeCount => _networkTopology.getNodeCount();
+
+  /// All known node prefixes in the topology graph (12-char hex, sorted).
+  List<String> get topologyNodes => _networkTopology.getAllNodes();
+
+  /// Direct neighbours of a given node prefix in the topology graph.
+  Set<String> topologyNeighbors(String prefix) =>
+      _networkTopology.getNeighbors(prefix);
+
+  /// Shortest hop distance between two topology nodes, or null if unreachable.
+  int? topologyHopDistance(String source, String dest) =>
+      _networkTopology.hopDistance(source, dest);
+
   bool get isPolicyEngineActive => _shouldRun;
   String get forwardingMode => _currentForwardingMode();
   String get selectedAlgorithmMode =>
@@ -102,7 +116,11 @@ class ForwardingPolicyService extends ChangeNotifier {
     _v1Strategy = ForwardingV1Strategy(
       onStateChanged: _onStrategyStateChanged,
     );
-    _topologyStrategy = TopologyForwardingStrategy(fallback: _v1Strategy);
+    _topologyStrategy = TopologyForwardingStrategy(
+      fallback: _v1Strategy,
+      topology: _networkTopology,
+      onStateChanged: _onStrategyStateChanged,
+    );
   }
 
   void start() {
@@ -305,8 +323,19 @@ class ForwardingPolicyService extends ChangeNotifier {
     notifyListeners();
 
     if (companionKey == null || companionKey.isEmpty) {
+      _topologyStrategy.updateLocalPrefix(null);
       return;
     }
+
+    // Register the local device in the topology graph so it always appears
+    // as a known node even before any #T: messages arrive.
+    if (companionKey.length >= 12) {
+      final prefix = companionKey.substring(0, 12).toLowerCase();
+      _networkTopology.registerLocalDevice(prefix);
+    }
+
+    // Keep the topology strategy's local prefix in sync with the companion.
+    _topologyStrategy.updateLocalPrefix(companionKey);
 
     // Rebuild map-visible keys for the new companion immediately from cached states.
     _rebuildMapVisibleKeys();
